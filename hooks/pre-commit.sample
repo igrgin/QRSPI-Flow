@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Protect planning artifacts and thoughts from accidental commits to product repos.
+if git diff --cached --name-only | rg '^thoughts/' >/dev/null; then
+  echo "✗ Refusing commit: staged files include thoughts/."
+  echo "  Move/share intentionally, or unstage thoughts files before committing."
+  exit 1
+fi
+
+echo "✓ pre-commit checks passed"
