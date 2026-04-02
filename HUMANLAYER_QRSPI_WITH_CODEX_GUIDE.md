@@ -286,3 +286,17 @@ Must enforce:
 - Advanced Context Engineering blog: https://www.humanlayer.dev/blog/advanced-context-engineering
 - Writing a good CLAUDE.md: https://www.humanlayer.dev/blog/writing-a-good-claude-md
 - Skill Issue / harness engineering: https://www.humanlayer.dev/blog/skill-issue-harness-engineering-for-coding-agents
+
+---
+
+## 13) Repository bootstrap status (this repo)
+
+This repository now includes a ready-to-use scaffold:
+
+- `AGENTS.md`
+- `.agent/commands/*`
+- `.agent/agents/*`
+- `.agent/templates/*`
+- `thoughts/shared/{research,plans,prs}/`
+
+Use these as your working harness for Codex sessions.
