@@ -1,304 +1,394 @@
-# HumanLayer QRSPI Flow (Research/Plan/Implement) — Complete Practical Guide
+# QRSPI for Codex: Reworking HumanLayer’s `.claude` Structure into a Codex-Native Flow
 
-## Scope of this guide
+## What changed in this version
 
-This guide consolidates how HumanLayer’s workflow operates across:
+This revision is a **Codex implementation guide**, not a Claude-only summary.
+It takes the HumanLayer `.claude` shape (commands, agents, settings, thoughts hooks) and translates it into a practical Codex harness you can use immediately.
 
-- the `humanlayer/humanlayer` repository (commands, agents, settings, thoughts tooling)
-- HumanLayer workshop docs
-- HumanLayer blog posts that explain the rationale behind prompts, skills, sub-agents, and hooks
-
-> **Note on naming:** HumanLayer docs consistently describe the core loop as **Research → Plan → Implement (RPI)**. In this guide I map your requested “QRSPI” framing as **Question → Research → Spec/Plan → Implement** (an inferred extension for practical usage).
+> HumanLayer source material describes the core loop as **Research → Plan → Implement**. In this guide we implement your requested **QRSPI** as:
+> **Question → Research → Spec → Plan → Implement**.
 
 ---
 
-## 1) Conceptual model: what the flow is actually doing
+## 1) Mapping: `.claude` → Codex equivalents
 
-At a high level, the flow intentionally splits work into compact artifacts:
+HumanLayer’s Claude setup uses:
 
-1. **Question / ticket ingestion**
-   - Put the issue in a local file (`issue.txt`/`issue.md`) so agent instructions can consistently reference it.
-2. **Research**
-   - Generate a documentation-style artifact of how the codebase currently works (file/line grounded), without jumping to implementation.
-3. **Spec / Plan**
-   - Convert findings into a phase-based implementation plan with clear verification criteria.
-4. **Implement**
-   - Execute phase by phase, running checks and pausing for manual verification where needed.
+- `.claude/commands/*.md` (slash-command prompt specs)
+- `.claude/agents/*.md` (specialized sub-agents)
+- `.claude/settings.json` (tool permissions / defaults)
+- `thoughts/` + git hooks (artifact hygiene and sync)
 
-This is context-management by design: each stage compacts context into reusable markdown, rather than carrying long chat history forward.
+For Codex, use this mapping:
 
----
-
-## 2) Minimal starter workflow (operator actions)
-
-From HumanLayer Workshop, the core operator loop is:
-
-1. Clone target repo and add issue text file.
-2. Run `/cl:research_codebase` and provide research prompt.
-3. Run `/cl:create_plan` and provide planning prompt.
-4. Run `/cl:implement_plan - PATH_TO_PLAN.md` and execute the plan.
-5. Finish with commit + PR flow.
-
-Recommended “magic words” in workshop examples:
-
-- **Research prompt ending:**
-  - `Do not make an implementation plan or explain how to fix.`
-- **Planning prompt ending:**
-  - `Work back and forth with me, sharing your open questions and phases outline before writing the plan.`
-
-These instructions reinforce the intended stage boundaries.
+| HumanLayer / Claude | Codex Equivalent | Purpose |
+|---|---|---|
+| `.claude/commands/*.md` | `.codex/prompts/*.md` | Stage prompts (`question`, `research`, `spec`, `plan`, `implement`) |
+| `.claude/agents/*.md` | `.codex/skills/*/SKILL.md` | Reusable specialist skills |
+| `.claude/settings.json` | `AGENTS.md` + wrapper scripts | Execution policy, workflow constraints, quality gates |
+| `/cl:research_codebase` style invocation | `./scripts/qrspi research <issue-file>` | Deterministic CLI entry point |
+| `thoughts/` docs | `thoughts/` docs (same) | Durable context artifacts |
+| pre/post commit hook logic | `.githooks/*` + `core.hooksPath` | Prevent accidental commits + auto-sync |
 
 ---
 
-## 3) Files to bootstrap into each working repo
+## 2) Codex file structure to create
 
-HumanLayer’s `claude init` command copies a `.claude/` bundle into your repo. In practice, these are the key files:
+Use this structure in your repo:
 
 ```text
-.claude/
-├── commands/
-│   ├── research_codebase.md
-│   ├── create_plan.md
-│   ├── implement_plan.md
-│   ├── commit.md
-│   ├── describe_pr.md
-│   └── ... (additional workflow commands)
-├── agents/
-│   ├── codebase-locator.md
-│   ├── codebase-analyzer.md
-│   ├── codebase-pattern-finder.md
-│   ├── thoughts-locator.md
-│   ├── thoughts-analyzer.md
-│   └── web-search-researcher.md
-└── settings.json
+.
+├── AGENTS.md
+├── thoughts/
+│   ├── shared/
+│   │   ├── research/
+│   │   ├── specs/
+│   │   ├── plans/
+│   │   └── prs/
+│   └── <your_user>/
+├── .codex/
+│   ├── prompts/
+│   │   ├── question.md
+│   │   ├── research.md
+│   │   ├── spec.md
+│   │   ├── plan.md
+│   │   ├── implement.md
+│   │   ├── commit.md
+│   │   └── describe_pr.md
+│   └── skills/
+│       ├── codebase-locator/SKILL.md
+│       ├── codebase-analyzer/SKILL.md
+│       ├── codebase-pattern-finder/SKILL.md
+│       ├── thoughts-locator/SKILL.md
+│       ├── thoughts-analyzer/SKILL.md
+│       └── web-researcher/SKILL.md
+├── scripts/
+│   ├── qrspi
+│   ├── thoughts-sync
+│   └── verify-phase
+└── .githooks/
+    ├── pre-commit
+    └── post-commit
 ```
 
-### What each layer does
+Why this works:
 
-- **`commands/`** = top-level slash-command prompts (workflow orchestration).
-- **`agents/`** = specialized sub-agent instructions (parallel/context-isolated investigation).
-- **`settings.json`** = harness defaults (allowed commands, thinking budget env vars, model defaults).
+- `.codex/prompts/` keeps your stage behavior explicit and versioned.
+- `.codex/skills/` gives you reusable “specialist behavior” analogous to `.claude/agents`.
+- `scripts/qrspi` gives team-wide deterministic entry points (instead of ad-hoc freeform prompting).
+- `thoughts/` remains the artifact backbone.
 
 ---
 
-## 4) Prompt anatomy by stage
+## 3) AGENTS.md (Codex control plane)
 
-### A) Research prompt (`.claude/commands/research_codebase.md`)
+In Codex, `AGENTS.md` is the best place to enforce workflow behavior.
+Use it to force QRSPI stage discipline.
 
-Purpose: document current state with evidence.
+Recommended `AGENTS.md` policy blocks:
 
-Core behavior encoded in prompt:
+1. **Stage discipline**
+   - In `research`: document current state only (no implementation recommendations).
+   - In `spec/plan`: propose phased design and checks.
+   - In `implement`: execute only approved plan file.
 
-- Explicit “documentarian mode” (no unsolicited fixing recommendations).
-- Read user-mentioned files fully before sub-task fanout.
-- Spawn parallel specialist sub-agents (locator/analyzer/pattern/thoughts/web if requested).
-- Synthesize with concrete `file:line` references.
-- Write a research artifact in `thoughts/shared/research/YYYY-MM-DD-...md` with metadata.
+2. **Artifact requirements**
+   - Research must write `thoughts/shared/research/YYYY-MM-DD-*.md`.
+   - Spec must write `thoughts/shared/specs/YYYY-MM-DD-*.md`.
+   - Plan must write `thoughts/shared/plans/YYYY-MM-DD-*.md`.
 
-**Practical operator input template:**
+3. **Verification requirements**
+   - Every implementation phase must run automated checks.
+   - Manual checks must be explicitly listed and confirmed.
 
-```text
-We are working on the issue in issue.txt.
-Please read the issue and research the codebase to understand how the system works
-and what files and line numbers are relevant to the issue.
-
-Do not make an implementation plan or explain how to fix.
-```
-
-### B) Plan prompt (`.claude/commands/create_plan.md`)
-
-Purpose: transform research into a testable implementation spec.
-
-Core behavior encoded in prompt:
-
-- Read all referenced artifacts first.
-- Perform additional targeted research before asking clarifying questions.
-- Present understanding + open questions.
-- Propose phases first; ask for feedback.
-- Write final plan to `thoughts/shared/plans/YYYY-MM-DD-...md`.
-- Include both automated and manual verification criteria per phase.
-
-**Practical operator input template:**
-
-```text
-We are working on the issue in issue.txt.
-We've done the following research: thoughts/shared/research/2026-04-02-...md
-
-Create a plan to fix the issue.
-Work back and forth with me, sharing your open questions and phases outline before writing the plan.
-```
-
-### C) Implement prompt (`.claude/commands/implement_plan.md`)
-
-Purpose: execute approved plan with disciplined verification.
-
-Core behavior encoded in prompt:
-
-- Read the plan and referenced files fully.
-- Implement phase-by-phase.
-- Run automated checks after each phase.
-- Pause for human manual verification (unless explicitly told to batch phases).
-- Update plan checkboxes to reflect completion.
-
-**Practical operator input template:**
-
-```text
-/cl:implement_plan - thoughts/shared/plans/2026-04-02-...md
-
-Please implement the plan.
-```
+4. **Path/reference requirements**
+   - Use exact file paths and line references for claims.
+   - Never commit `thoughts/` to product code history.
 
 ---
 
-## 5) Sub-agents (“skills” in practice) and when to use each
+## 4) Prompt pack for Codex (`.codex/prompts/*.md`)
 
-In HumanLayer’s shipped config, the reusable specialization units are `.claude/agents/*.md` sub-agents:
+The key rework is converting Claude command prompts into Codex stage prompts.
+Below are concise, production-ready prompt intents.
 
-- **`codebase-locator`**: where things live.
-- **`codebase-analyzer`**: how a specific component works.
-- **`codebase-pattern-finder`**: find comparable implementations.
-- **`thoughts-locator`**: discover prior research/plans/notes.
-- **`thoughts-analyzer`**: extract high-value decisions from prior docs.
-- **`web-search-researcher`**: external lookup when needed.
+## `question.md`
 
-The pattern is:
+Goal: normalize issue intake.
 
-1. parent command decomposes task,
-2. dispatches sub-agents in parallel,
-3. receives compacted results (not full noisy tool traces),
-4. synthesizes into durable markdown artifact.
+- Read `issue.txt` or provided ticket file.
+- Extract goals, constraints, acceptance criteria, unknowns.
+- Output a short “Question Brief” and list missing info.
 
-This is the context-firewall concept discussed by HumanLayer: parent thread stays focused, subtasks absorb exploration noise.
+## `research.md`
+
+Goal: equivalent to HumanLayer `research_codebase`.
+
+Hard rules:
+
+- Documentarian mode only.
+- Read referenced files fully first.
+- Use specialist skills in parallel where useful.
+- Produce research artifact with evidence.
+
+Output file:
+
+- `thoughts/shared/research/YYYY-MM-DD-<slug>.md`
+
+Required sections:
+
+- Research Question
+- System Overview
+- Detailed Findings (with file references)
+- Data/Control Flows
+- Related Historical Context
+- Open Questions
+
+## `spec.md`
+
+Goal: bridge between research and implementation plan.
+
+- Define desired end-state behavior.
+- Define non-goals.
+- Define invariants and constraints.
+- Define acceptance criteria and test strategy.
+
+Output file:
+
+- `thoughts/shared/specs/YYYY-MM-DD-<slug>.md`
+
+## `plan.md`
+
+Goal: phase-based, executable plan.
+
+- Derive phases from spec.
+- For each phase: files to change, operations, automated checks, manual checks, rollback notes.
+- Require human review before implement stage.
+
+Output file:
+
+- `thoughts/shared/plans/YYYY-MM-DD-<slug>.md`
+
+## `implement.md`
+
+Goal: controlled execution.
+
+- Implement only from approved plan.
+- Complete one phase at a time.
+- Run checks after each phase.
+- Update phase checkboxes in plan.
+- Pause for manual verification unless user explicitly asks batching.
+
+## `commit.md` and `describe_pr.md`
+
+Goal: consistent handoff quality.
+
+- `commit.md`: produce conventional, scoped commit messages from actual changes.
+- `describe_pr.md`: summarize scope, tests, risks, and validation evidence.
 
 ---
 
-## 6) Hooks you need (two categories)
+## 5) Skill pack for Codex (`.codex/skills/*/SKILL.md`)
 
-## A) Git hooks from the Thoughts tool (`humanlayer thoughts init`)
+Recreate HumanLayer sub-agents as Codex skills.
 
-The thoughts setup writes repository hooks to enforce artifact hygiene:
+Each skill should include:
 
-- **pre-commit**: blocks committing `thoughts/` into the code repo.
-- **post-commit**: auto-runs `humanlayer thoughts sync` to sync thought artifacts.
+- **When to use**
+- **Inputs**
+- **Process**
+- **Output format**
+- **Strict do/don’t list**
 
-This makes markdown workflow durable without polluting product repo history.
+Recommended skills:
 
-## B) Harness hooks (Claude Code hook concept)
+1. `codebase-locator`
+   - Finds where components live.
+2. `codebase-analyzer`
+   - Explains how code paths currently work.
+3. `codebase-pattern-finder`
+   - Finds comparable implementations and test patterns.
+4. `thoughts-locator`
+   - Finds relevant prior docs.
+5. `thoughts-analyzer`
+   - Extracts high-value, still-relevant decisions.
+6. `web-researcher`
+   - External docs lookup when local code/artifacts are insufficient.
 
-HumanLayer’s harness-engineering guidance treats hooks as deterministic control-flow points for:
-
-- pre/post tool lifecycle automation,
-- surfacing compile/type failures before task completion,
-- notifications and integration glue.
-
-Even when exact hook implementation differs by harness, the design goal is the same: convert implicit behavior into deterministic, reusable guardrails.
+This preserves HumanLayer’s key design: **parallel specialization + synthesized artifact output**.
 
 ---
 
-## 7) Thoughts tool structure and file architecture
+## 6) Hooks for Codex QRSPI
 
-When `humanlayer thoughts init` is configured, you get:
+You need two hook classes:
 
-### In your working code repo
+## A) Git safety hooks (required)
 
-```text
-thoughts/
-├── <user>/      -> symlink to global thoughts repo (repo-specific personal notes)
-├── shared/      -> symlink to global thoughts repo (repo-specific shared notes)
-├── global/      -> symlink to global thoughts repo (cross-repo notes)
-├── searchable/  (hardlink index built by sync)
-└── CLAUDE.md    (usage instructions generated by tool)
+`pre-commit`:
+
+- Block staging any `thoughts/` content in app repo.
+- Optional: block if `plan.md` references unchecked required checks for implemented phases.
+
+`post-commit`:
+
+- Run `scripts/thoughts-sync` to sync thoughts repo (or enqueue background sync).
+
+Example `pre-commit` behavior:
+
+- If `git diff --cached --name-only | grep '^thoughts/'` => reject commit.
+
+## B) Verification hooks (recommended)
+
+Use `scripts/verify-phase` as a standard post-implementation gate.
+
+- For backend repos: lint + unit + integration subset.
+- For frontend repos: typecheck + test + build/lint.
+- Fail fast and report exact command failures.
+
+---
+
+## 7) Codex CLI wrapper (`scripts/qrspi`)
+
+Create a small wrapper to reduce freeform drift:
+
+```bash
+./scripts/qrspi question issue.txt
+./scripts/qrspi research issue.txt
+./scripts/qrspi spec thoughts/shared/research/2026-04-02-foo.md
+./scripts/qrspi plan thoughts/shared/specs/2026-04-02-foo.md
+./scripts/qrspi implement thoughts/shared/plans/2026-04-02-foo.md
 ```
 
-### In your separate thoughts git repo
+Wrapper responsibilities:
 
-```text
-<thoughts_repo>/
-├── repos/
-│   └── <mapped-repo-name>/
-│       ├── <user>/
-│       └── shared/
-└── global/
-    ├── <user>/
-    └── shared/
-```
+1. Validate required input file exists.
+2. Print the stage prompt template path being used.
+3. Enforce output target path convention.
+4. Call Codex with the stage prompt + provided context.
 
-### Recommended artifact locations
-
-- Research docs: `thoughts/shared/research/YYYY-MM-DD-...md`
-- Plans/specs: `thoughts/shared/plans/YYYY-MM-DD-...md`
-- PR narratives: `thoughts/shared/prs/...md`
-- Local private notes: `thoughts/<user>/...`
+This creates predictable ergonomics analogous to Claude slash commands.
 
 ---
 
-## 8) Suggested “QRSPI” execution playbook (operational)
+## 8) Stage-by-stage Codex operating guide
 
-## Q — Question framing
+## Q — Question
 
-- Save canonical issue text to `issue.txt`.
-- Add acceptance criteria and constraints directly in that file.
-- If ticket has screenshots/logs, include paths or copied essentials.
+Input:
+
+- `issue.txt` (or ticket markdown)
+
+Output:
+
+- `thoughts/shared/research/<date>-<slug>-question-brief.md` (optional) or inline brief
+
+Checklist:
+
+- Problem statement normalized
+- Constraints listed
+- Acceptance criteria captured
+- Unknowns explicitly listed
 
 ## R — Research
 
-- Run `/cl:research_codebase`.
-- Keep output descriptive (what exists + where).
-- Require line-grounded references and system-level flow mapping.
-- Publish research artifact in `thoughts/shared/research/`.
+Input:
 
-## S/P — Spec/Plan
+- Question brief + issue
 
-- Run `/cl:create_plan` with reference to research doc.
-- Force phase draft review before final write.
-- Ensure each phase has:
-  - file-level change scope,
-  - automated checks,
-  - manual checks,
-  - explicit stop points for human signoff.
+Output:
+
+- `thoughts/shared/research/YYYY-MM-DD-<slug>.md`
+
+Checklist:
+
+- Concrete file paths + relevant references
+- Data flow and control flow documented
+- No implementation proposal leakage
+
+## S — Spec
+
+Input:
+
+- Research doc
+
+Output:
+
+- `thoughts/shared/specs/YYYY-MM-DD-<slug>.md`
+
+Checklist:
+
+- End-state behavior precise
+- Non-goals explicit
+- Acceptance tests explicit
+
+## P — Plan
+
+Input:
+
+- Spec doc
+
+Output:
+
+- `thoughts/shared/plans/YYYY-MM-DD-<slug>.md`
+
+Checklist:
+
+- Phases are independently verifiable
+- Automated/manual checks per phase
+- Sequencing and dependencies clear
 
 ## I — Implement
 
-- Run `/cl:implement_plan - <plan path>`.
-- Execute one phase at a time for complex changes.
-- After each phase: run checks, update plan checkboxes, pause for manual verification.
-- End with commit + PR prompt helpers (`/commit`, `/describe_pr`) as needed.
+Input:
+
+- Approved plan
+
+Output:
+
+- Code changes + updated plan checkboxes + commit + PR notes
+
+Checklist:
+
+- One phase at a time
+- Verification executed and recorded
+- Manual verification requested at planned pause points
 
 ---
 
-## 9) Common failure modes and fixes
+## 9) Practical migration sequence from existing `.claude` repos
 
-- **Agent jumps to coding during research**
-  - Reassert stage boundary language (“do not propose fixes”).
-- **Plan appears without clarifying questions**
-  - Re-run with explicit collaboration instruction (work back and forth first).
-- **Context gets noisy/slow**
-  - Increase use of sub-agent decomposition and artifact compaction.
-- **Thought artifacts accidentally staged**
-  - Ensure thoughts pre-commit hook is installed and active.
-- **Too many tools degrade performance**
-  - Favor minimal tool surface and progressive disclosure.
+1. Keep existing `.claude/` as reference source.
+2. Create `.codex/prompts/` by porting command intent (`research`, `plan`, `implement`, etc.).
+3. Create `.codex/skills/` by porting each agent’s operating contract.
+4. Move policy constraints into `AGENTS.md`.
+5. Add `scripts/qrspi`, `scripts/verify-phase`, and git hooks.
+6. Run first ticket fully via QRSPI and refine prompts based on friction.
 
 ---
 
-## 10) Implementation checklist for a new team rollout
+## 10) Minimal “done-right” criteria for Codex QRSPI
 
-1. Install HumanLayer tooling in developer environments.
-2. Bootstrap `.claude/commands`, `.claude/agents`, `.claude/settings.json` in each active repo.
-3. Add concise root `CLAUDE.md` / `AGENTS.md` with universally applicable rules.
-4. Initialize `humanlayer thoughts` and verify hooks installed.
-5. Standardize naming conventions for `thoughts/shared/research` and `thoughts/shared/plans` docs.
-6. Train team on explicit stage prompts (Research vs Plan vs Implement).
-7. Define mandatory verification commands per repo and include in plan templates.
-8. Use `/commit` + `/describe_pr` prompts to standardize handoff quality.
+You are “correctly implemented” when:
+
+- Team can run all five stages with deterministic paths.
+- Each stage produces its artifact in `thoughts/shared/*`.
+- Research stays descriptive; implementation stays plan-driven.
+- Git hooks prevent `thoughts/` pollution.
+- PRs consistently include phase verification evidence.
 
 ---
 
-## 11) Primary references
+## 11) Primary sources used for the rework
 
-- HumanLayer repo: https://github.com/humanlayer/humanlayer
-- Workshop doc: https://www.humanlayer.dev/docs/workshop
-- ACE post (Research/Plan/Implement with prompt links): https://www.humanlayer.dev/blog/advanced-context-engineering
-- Harness engineering (skills/sub-agents/hooks): https://www.humanlayer.dev/blog/skill-issue-harness-engineering-for-coding-agents
-- CLAUDE.md conditional instructions post: https://www.humanlayer.dev/blog/stop-claude-from-ignoring-your-claude-md
+- HumanLayer repository (`.claude/commands`, `.claude/agents`, thoughts tooling):
+  - https://github.com/humanlayer/humanlayer
+- Workshop flow and operator prompts:
+  - https://www.humanlayer.dev/docs/workshop
+- Advanced Context Engineering (Research → Plan → Implement):
+  - https://www.humanlayer.dev/blog/advanced-context-engineering
+- Harness engineering concepts (skills/sub-agents/hooks):
+  - https://www.humanlayer.dev/blog/skill-issue-harness-engineering-for-coding-agents
+- CLAUDE.md prompt-control pattern:
+  - https://www.humanlayer.dev/blog/stop-claude-from-ignoring-your-claude-md
 
